@@ -9,6 +9,10 @@ pub enum BindingTarget {
     Account(SlotKey),
     CycleNext,
     CyclePrev,
+    /// Click the same spot in every live account, then return to the first.
+    ClickAll,
+    /// From the first account, `/invite` every other live account.
+    InviteAll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

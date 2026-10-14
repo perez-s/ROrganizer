@@ -45,5 +45,13 @@
     "section": "Cycle",
     "next": "Next",
     "prev": "Previous"
+  },
+  "macros": {
+    "section": "Macros",
+    "invite_all": "Invite all",
+    "click_all": "Click all",
+    "auto_travel": "Auto /travel",
+    "on": "on",
+    "off": "off"
   }
 }

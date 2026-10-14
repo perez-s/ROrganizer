@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::i18n::Lang;
+use crate::macros::MacroTiming;
 use crate::theme::Theme;
 use crate::triggers::{BindingTarget, Trigger};
 
@@ -22,6 +23,16 @@ pub struct StoredConfig {
     /// title format changes without rebuilding.
     #[serde(default)]
     pub title_regex: Option<String>,
+    /// Paste a copied `/travel` into the first account's chat. Missing in
+    /// older JSONs → on.
+    #[serde(default = "default_true")]
+    pub auto_travel: bool,
+    #[serde(default)]
+    pub macro_timing: MacroTiming,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// `%APPDATA%\rorganizer\config.json` on Windows. Returns None on platforms
@@ -99,6 +110,8 @@ mod tests {
             lang: Lang::Fr,
             theme: Theme::Dark,
             title_regex: None,
+            auto_travel: false,
+            macro_timing: MacroTiming::default(),
         }
     }
 
@@ -114,6 +127,23 @@ mod tests {
         assert_eq!(loaded.cycle_order, cfg.cycle_order);
         assert_eq!(loaded.lang, cfg.lang);
         assert_eq!(loaded.theme, cfg.theme);
+        assert_eq!(loaded.auto_travel, cfg.auto_travel);
+        assert_eq!(loaded.macro_timing, cfg.macro_timing);
+    }
+
+    #[test]
+    fn config_without_macro_fields_still_loads() {
+        // A config.json written before the macros existed.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"bindings":[],"cycle_order":[],"lang":"Fr","theme":"Dark"}"#,
+        )
+        .unwrap();
+        let loaded = load(&path).expect("old config should load");
+        assert!(loaded.auto_travel);
+        assert_eq!(loaded.macro_timing, MacroTiming::default());
     }
 
     #[test]

@@ -47,6 +47,8 @@ pub fn draw(ui: &mut egui::Ui, app: &mut App) {
 
             ui.add_space(8.0);
             draw_cycle_section(ui, theme, app, &conflicts);
+            ui.add_space(8.0);
+            draw_macro_section(ui, theme, app, &conflicts);
             draw_active_toggle(ui, ctx, theme, app);
         });
 }
@@ -339,12 +341,57 @@ fn draw_cycle_section(ui: &mut egui::Ui, theme: Theme, app: &mut App, conflicts:
     }
 }
 
+fn draw_macro_section(ui: &mut egui::Ui, theme: Theme, app: &mut App, conflicts: &HashSet<Trigger>) {
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(t!("macros.section").to_uppercase())
+            .size(11.0)
+            .color(theme::text_tertiary(theme)),
+    );
+    ui.add_space(6.0);
+
+    let click_binding = app.binding_for(&BindingTarget::ClickAll);
+    let click_conflict = click_binding.map(|t| conflicts.contains(&t)).unwrap_or(false);
+    if draw_cycle_row(ui, theme, &t!("macros.click_all"), click_binding, click_conflict) {
+        app.bind_target(BindingTarget::ClickAll);
+    }
+    ui.add_space(6.0);
+    let invite_binding = app.binding_for(&BindingTarget::InviteAll);
+    let invite_conflict = invite_binding.map(|t| conflicts.contains(&t)).unwrap_or(false);
+    if draw_cycle_row(ui, theme, &t!("macros.invite_all"), invite_binding, invite_conflict) {
+        app.bind_target(BindingTarget::InviteAll);
+    }
+    ui.add_space(6.0);
+    let on = app.auto_travel();
+    let state = if on { t!("macros.on") } else { t!("macros.off") };
+    if draw_row(ui, theme, &t!("macros.auto_travel"), &state, on, false) {
+        app.toggle_auto_travel();
+    }
+}
+
 /// Returns true if the user clicked the pill — caller opens the capture modal.
 fn draw_cycle_row(
     ui: &mut egui::Ui,
     theme: Theme,
     label: &str,
     binding: Option<Trigger>,
+    in_conflict: bool,
+) -> bool {
+    let pill = match binding {
+        Some(t) => t.display_label(),
+        None => t!("binding.set").to_string(),
+    };
+    draw_row(ui, theme, label, &pill, binding.is_some(), in_conflict)
+}
+
+/// A labelled row with a pill on the right. Returns true if the pill was
+/// clicked.
+fn draw_row(
+    ui: &mut egui::Ui,
+    theme: Theme,
+    label: &str,
+    pill: &str,
+    pill_set: bool,
     in_conflict: bool,
 ) -> bool {
     let (bg_normal, bg_hover, border) = if in_conflict {
@@ -380,7 +427,7 @@ fn draw_cycle_row(
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        let r = binding_pill(ui, theme, binding, in_conflict);
+                        let r = text_pill(ui, theme, pill, pill_set, in_conflict);
                         pill_rect = Some(r.rect);
                     },
                 );
@@ -443,7 +490,19 @@ fn binding_pill(
         Some(t) => t.display_label(),
         None => t!("binding.set").to_string(),
     };
-    let has_binding = binding.is_some();
+    text_pill(ui, theme, &label, binding.is_some(), in_conflict)
+}
+
+/// `has_binding` picks the filled style (a bound shortcut, a toggle that's
+/// on) over the outlined one.
+fn text_pill(
+    ui: &mut egui::Ui,
+    theme: Theme,
+    label: &str,
+    has_binding: bool,
+    in_conflict: bool,
+) -> egui::Response {
+    let label = label.to_string();
 
     let font = egui::FontId::monospace(11.0);
     let inner = ui.ctx().fonts_mut(|f| {

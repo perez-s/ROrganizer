@@ -38,6 +38,7 @@ impl HookHandle {
         &self,
         bindings: Vec<(Trigger, BindingAction)>,
         cycle_hwnds: Vec<isize>,
+        cycle_names: Vec<String>,
     ) {
         let Some(state_mut) = state::HOOK_STATE.get() else { return };
         let Ok(mut state) = state_mut.lock() else { return };
@@ -48,6 +49,7 @@ impl HookHandle {
             state.cycle_index,
         );
         state.cycle_hwnds = cycle_hwnds;
+        state.cycle_names = cycle_names;
     }
 
     /// Override the cycler cursor explicitly. Called by App when the
@@ -59,6 +61,50 @@ impl HookHandle {
         state.cycle_index = if len == 0 { 0 } else { cycle_index.min(len - 1) };
         state.cycle_current_hwnd = state.cycle_hwnds.get(state.cycle_index).copied();
     }
+}
+
+/// Runs whatever is bound to `trigger`. Returns true when the event must be
+/// swallowed. Shared by both hook callbacks.
+///
+/// While a macro is playing, every event passes through untouched: the
+/// macro's own injected Space / Ctrl+V / Enter must reach Dofus even if one
+/// of them happens to be bound.
+fn dispatch(trigger: Trigger) -> bool {
+    if crate::macros::is_busy() {
+        return false;
+    }
+    let Some(state_mut) = state::HOOK_STATE.get() else { return false };
+    let Ok(mut state) = state_mut.lock() else { return false };
+    if let Some(job) = keyboard::resolve_macro(&state, trigger) {
+        drop(state);
+        crate::macros::submit(job);
+        return true;
+    }
+    let target = keyboard::resolve_action(&mut state, trigger);
+    // Release the lock before the focus dance, as before.
+    drop(state);
+    match target {
+        Some(hwnd) => {
+            crate::win::focus_window(hwnd);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Where an auto `/travel` should be sent: the first live account in cycle
+/// order. `None` when the app is inactive, no account runs, or the
+/// foreground window is itself a Dofus account (the copy happened in-game,
+/// not from an outside page).
+pub fn travel_target(foreground: isize) -> Option<isize> {
+    if !state::HOOK_ENABLED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let state = state::HOOK_STATE.get()?.lock().ok()?;
+    if state.cycle_hwnds.contains(&foreground) {
+        return None;
+    }
+    state.cycle_hwnds.first().copied()
 }
 
 /// Returns the new `cycle_index` after `cycle_hwnds` has been replaced.
@@ -93,6 +139,7 @@ pub fn install() -> HookHandle {
     let st = state::HookState {
         bindings: Vec::new(),
         cycle_hwnds: Vec::new(),
+        cycle_names: Vec::new(),
         cycle_index: 0,
         cycle_current_hwnd: None,
     };

@@ -5,8 +5,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, MSLLHOOKSTRUCT, WM_MBUTTONDOWN, WM_MOUSEWHEEL, WM_XBUTTONDOWN,
 };
 
-use super::keyboard::resolve_action;
-use super::state::{HOOK_ENABLED, HOOK_STATE};
+use super::state::HOOK_ENABLED;
 use crate::triggers::{MouseBtn, Trigger, WheelDir};
 
 pub unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
@@ -48,13 +47,7 @@ pub unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPAR
         return CallNextHookEx(None, code, wparam, lparam);
     };
 
-    let focus_target = HOOK_STATE.get().and_then(|m| {
-        let mut state = m.lock().ok()?;
-        resolve_action(&mut state, t)
-    });
-
-    if let Some(hwnd) = focus_target {
-        crate::win::focus_window(hwnd);
+    if super::dispatch(t) {
         return LRESULT(1);
     }
 

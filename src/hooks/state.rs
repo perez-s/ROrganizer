@@ -9,6 +9,8 @@ pub enum BindingAction {
     Focus(isize),
     CycleNext,
     CyclePrev,
+    ClickAll,
+    InviteAll,
 }
 
 pub struct HookState {
@@ -17,6 +19,9 @@ pub struct HookState {
     pub bindings: Vec<(Trigger, BindingAction)>,
     /// Live HWNDs of the cycle in user-defined order, with dead slots filtered out.
     pub cycle_hwnds: Vec<isize>,
+    /// Character names, parallel to `cycle_hwnds`. Only the invite macro
+    /// reads them.
+    pub cycle_names: Vec<String>,
     /// Current position of the cycler cursor inside `cycle_hwnds`.
     pub cycle_index: usize,
     /// Last HWND the cycler / a focus binding actually focused. Tracked here

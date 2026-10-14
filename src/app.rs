@@ -53,6 +53,8 @@ fn binding_target_sort_key(b: &BindingTarget) -> (u8, &str) {
         BindingTarget::Account(s) => (0, s.as_str()),
         BindingTarget::CycleNext => (1, ""),
         BindingTarget::CyclePrev => (2, ""),
+        BindingTarget::ClickAll => (3, ""),
+        BindingTarget::InviteAll => (4, ""),
     }
 }
 
@@ -142,6 +144,10 @@ pub struct App {
     /// (`"iop"`, `"feca"`, …). Decoded once at boot from `assets::CLASS_PNGS`.
     /// Looked up via `class_icon::class_filename(raw_class)`.
     class_icons: HashMap<&'static str, egui::TextureHandle>,
+    auto_travel: bool,
+    /// Only round-tripped: edited by hand in config.json, pushed to the
+    /// macro worker once at boot.
+    macro_timing: crate::macros::MacroTiming,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -169,6 +175,10 @@ impl App {
         let config_path = config::default_path();
         let stored = config_path.as_ref().and_then(|p| config::load(p));
 
+        let (auto_travel, macro_timing) = stored
+            .as_ref()
+            .map(|c| (c.auto_travel, c.macro_timing))
+            .unwrap_or((true, Default::default()));
         let (theme, lang, bindings, cycle_order, title_regex) = match stored {
             Some(cfg) => (
                 cfg.theme,
@@ -213,6 +223,11 @@ impl App {
         win::spawn_watcher(windows.clone(), cc.egui_ctx.clone(), regex_src, refresh_rx);
 
         let hooks = crate::hooks::install();
+        crate::macros::set_timing(macro_timing);
+        crate::macros::set_auto_travel(auto_travel);
+        crate::macros::spawn();
+        #[cfg(windows)]
+        win::clipboard::spawn_watcher();
 
         Self {
             theme,
@@ -238,6 +253,8 @@ impl App {
             show_about: false,
             about_icon,
             class_icons,
+            auto_travel,
+            macro_timing,
         }
     }
 
@@ -347,6 +364,16 @@ impl App {
 
     pub fn binding_for(&self, target: &BindingTarget) -> Option<Trigger> {
         self.bindings.get(target).copied()
+    }
+
+    pub fn auto_travel(&self) -> bool {
+        self.auto_travel
+    }
+
+    pub fn toggle_auto_travel(&mut self) {
+        self.auto_travel = !self.auto_travel;
+        crate::macros::set_auto_travel(self.auto_travel);
+        self.mark_dirty();
     }
 
     pub fn binding_for_account(&self, slot: &str) -> Option<Trigger> {
@@ -494,6 +521,8 @@ impl App {
             lang: self.lang,
             theme: self.theme,
             title_regex: self.title_regex.clone(),
+            auto_travel: self.auto_travel,
+            macro_timing: self.macro_timing,
         };
         let _ = config::save_atomic(path, &cfg);
     }
@@ -510,11 +539,16 @@ impl App {
             .map(|w| (w.slot_key.clone(), w.hwnd))
             .collect();
 
-        let cycle_hwnds: Vec<isize> = self
+        let (cycle_hwnds, cycle_names): (Vec<isize>, Vec<SlotKey>) = self
             .cycle_order
             .iter()
-            .filter_map(|slot| accounts.iter().find(|(s, _)| s == slot).map(|(_, h)| *h))
-            .collect();
+            .filter_map(|slot| {
+                accounts
+                    .iter()
+                    .find(|(s, _)| s == slot)
+                    .map(|(s, h)| (*h, s.clone()))
+            })
+            .unzip();
 
         let new_state = SyncSnapshot {
             accounts: accounts.clone(),
@@ -549,12 +583,19 @@ impl App {
         if let Some(trig) = self.bindings.get(&BindingTarget::CyclePrev) {
             bindings.push((*trig, BindingAction::CyclePrev));
         }
+        // 3. Macros last, for the same reason.
+        if let Some(trig) = self.bindings.get(&BindingTarget::ClickAll) {
+            bindings.push((*trig, BindingAction::ClickAll));
+        }
+        if let Some(trig) = self.bindings.get(&BindingTarget::InviteAll) {
+            bindings.push((*trig, BindingAction::InviteAll));
+        }
 
-        self.hooks.set_bindings_and_cycle(bindings, cycle_hwnds);
+        self.hooks.set_bindings_and_cycle(bindings, cycle_hwnds, cycle_names);
     }
 
     /// Resize the OS window to fit the current content height. Width stays
-    /// fixed at 340. Height clamped to [280, 600].
+    /// fixed at 340. Height clamped to [280, 700].
     ///
     /// We can't rely on `ctx.used_rect()` here: when the viewport is too
     /// small the activate button overflows below the panel, doesn't get
@@ -568,6 +609,7 @@ impl App {
         const ROW: f32 = 46.0; // frame ~40 (32 icon + 8 v-pad) + 6 inter-row gap
         const CYCLE_HEAD: f32 = 32.0; // separator + label + spacing
         const CYCLE_BLOCK: f32 = 2.0 * ROW + 4.0; // 2 rows + small slack
+        const MACRO_BLOCK: f32 = 3.0 * ROW + 4.0;
         const SUMMARY_GAP: f32 = 10.0;
         const TAIL_PAD: f32 = 12.0;
         // Banner: 6 leading space + 16 frame inner_margin + 14 per line.
@@ -594,6 +636,8 @@ impl App {
             + banner_h
             + CYCLE_HEAD
             + CYCLE_BLOCK
+            + CYCLE_HEAD // macros section: same header, three rows
+            + MACRO_BLOCK
             + toggle_h
             + TAIL_PAD;
         // The About modal card is 380 px tall + 20 px padding. When it's
@@ -605,7 +649,7 @@ impl App {
         if self.show_about {
             desired = desired.max(ABOUT_MIN);
         }
-        let desired = desired.clamp(280.0, 600.0);
+        let desired = desired.clamp(280.0, 700.0);
 
         if (desired - self.last_synced_height).abs() > 0.5 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, desired)));

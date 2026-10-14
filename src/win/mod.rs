@@ -1,3 +1,5 @@
+#[cfg(windows)]
+pub mod clipboard;
 pub mod enumerate;
 pub mod focus;
 pub mod process;
